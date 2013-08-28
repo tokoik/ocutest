@@ -358,8 +358,6 @@ static void GLFWCALL keyboard(int key, int action)
 {
   if (action == GLFW_PRESS)
   {
-    static bool blend = true;
-
     switch (key)
     {
     case GLFW_KEY_SPACE:
