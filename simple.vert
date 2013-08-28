@@ -3,7 +3,6 @@
 
 // 頂点属性
 layout (location = 0) in vec4 pv;                   // ローカル座標系の頂点位置
-layout (location = 1) in vec4 nv;                   // 頂点の法線ベクトル
 
 // ラスタライザに送る頂点属性
 out vec2 t;                                         // テクスチャ座標

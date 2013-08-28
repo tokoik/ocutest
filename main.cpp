@@ -263,9 +263,13 @@ static GLuint rectangle(void)
   static const GLfloat p[] =
   {
     -1.0f, -1.0f,
+     0.0f, -1.0f,
+     0.0f,  1.0f,
+    -1.0f,  1.0f,
+     0.0f, -1.0f,
      1.0f, -1.0f,
      1.0f,  1.0f,
-    -1.0f,  1.0f
+     0.0f,  1.0f
   };
   glBufferData(GL_ARRAY_BUFFER, sizeof p, p, GL_STATIC_DRAW);
 
@@ -330,9 +334,6 @@ static int init(const char *title)
 
   // 補助プログラムによる初期化
   ggInit();
-
-  // 背景色
-  glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
 
   // 隠面消去の設定
   glDisable(GL_DEPTH_TEST);
@@ -410,9 +411,6 @@ int main(int argc, const char * argv[])
   // ウィンドウが開いている間くり返し描画する
   while (glfwGetWindowParam(GLFW_OPENED) && glfwGetKey(GLFW_KEY_ESC) == GLFW_RELEASE)
   {
-    // 画面クリア
-    glClear(GL_COLOR_BUFFER_BIT);
-
     // シェーダの使用
     glUseProgram(shader);
     glUniform1i(texLoc, 0);
@@ -426,6 +424,7 @@ int main(int argc, const char * argv[])
     // 描画
     glBindVertexArray(rect);
     glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
+    glDrawArrays(GL_TRIANGLE_FAN, 4, 4);
 
     // ダブルバッファリング
     glfwSwapBuffers();
