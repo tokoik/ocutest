@@ -75,14 +75,14 @@ public:
   {
     // カメラを初期化する
     capture = cvCreateCameraCapture(index);
-    if (capture == 0)
+    if (capture)
     {
-      std::cerr << "cannot capture image" << std::endl;
-      exit(1);
+      cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_WIDTH, static_cast<double>(width));
+      cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_HEIGHT, static_cast<double>(height));
+      cvSetCaptureProperty(capture, CV_CAP_PROP_FPS, static_cast<double>(fps));
     }
-    cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_WIDTH, static_cast<double>(width));
-    cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_HEIGHT, static_cast<double>(height));
-    cvSetCaptureProperty(capture, CV_CAP_PROP_FPS, static_cast<double>(fps));
+    else
+      std::cerr << "Cannot capture from camera " << index << std::endl;
 
     // テクスチャ用のメモリを確保する
     texture = new GLubyte[width * height * 4];
@@ -127,7 +127,7 @@ public:
 #endif
 
     // image の release
-    cvReleaseCapture(&capture);
+    if (capture) cvReleaseCapture(&capture);
 
     // メモリの解放
     delete[] texture;
@@ -195,7 +195,7 @@ public:
       // 終了条件のテスト
       if (!check()) break;
 
-      if (cvGrabFrame(capture))
+      if (capture && cvGrabFrame(capture))
       {
         // キャプチャ映像から画像を切り出す
         IplImage *image = cvRetrieveFrame(capture);
@@ -210,7 +210,7 @@ public:
           else if (image->nChannels == 4)
             format = GL_BGRA;
           else
-            format = GL_LUMINANCE;
+            format = GL_RED;
 
           // テクスチャメモリへの転送
           GLsizei size = REALWIDTH * image->nChannels;
@@ -317,7 +317,7 @@ static int init(const char *title)
   glfwOpenWindowHint(GLFW_OPENGL_PROFILE, GLFW_OPENGL_CORE_PROFILE);
 
   // ウィンドウを開く
-  if (glfwOpenWindow(DISPWIDTH, DISPHEIGHT, 8, 8, 8, 8, 24, 0, GLFW_FULLSCREEN) == GL_FALSE)
+  if (glfwOpenWindow(DISPWIDTH, DISPHEIGHT, 8, 8, 8, 8, 24, 0, GLFW_WINDOW) == GL_FALSE)
   {
     // ウィンドウが開けなかった
     std::cerr << "Error: Failed to open GLFW window." << std::endl;
