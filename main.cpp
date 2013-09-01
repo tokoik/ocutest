@@ -36,14 +36,15 @@ using namespace gg;
 #define CAPTFPS 30
 
 // テクスチャサイズ
-#define TEXWIDTH 1024
+#define TEXWIDTH 512
 #define TEXHEIGHT 512
 
 // 使用するテクスチャの領域
-#define REALWIDTH (CAPTHEIGHT * DISPWIDTH / DISPHEIGHT / 2)
-#define REALHEIGHT CAPTHEIGHT
-#define REALORIGINX ((CAPTWIDTH - REALWIDTH) / 2)
-#define REALORIGINY 0
+#define IMGASPECT 1 // (DISPWIDTH / DISPHEIGHT / 2)
+#define IMGWIDTH (CAPTHEIGHT * IMGASPECT)
+#define IMGHEIGHT CAPTHEIGHT
+#define IMGORIGINX ((CAPTWIDTH - IMGWIDTH) / 2)
+#define IMGORIGINY 0
 
 // キャプチャ用スレッド
 class CaptureWorker
@@ -55,6 +56,7 @@ class CaptureWorker
   GLenum format;
   GLsizei width, height;
   GLubyte *texture;
+  GLfloat scale[2];
 
   // 実行状態
   bool status;
@@ -91,6 +93,8 @@ public:
     this->width = width;
     this->height = height;
     this->format = GL_BGRA;
+    this->scale[0] = 0.5f * static_cast<GLfloat>(width) / static_cast<GLfloat>(TEXWIDTH);
+    this->scale[1] = -0.5f * static_cast<GLfloat>(height) / static_cast<GLfloat>(TEXHEIGHT);
 
     // スレッドとミューテックスを生成する
 #ifdef _WIN32
@@ -202,9 +206,14 @@ public:
 
         if (image)
         {
-          // 切り出した画像の種類の判別
-          width = image->width;
+          // 切り出した画像のサイズとテクスチャ座標のスケール
           height = image->height;
+          width = height * IMGASPECT;
+          if (width > image->width) width = image->width;
+          scale[0] = 0.5f * static_cast<GLfloat>(width) / static_cast<GLfloat>(TEXWIDTH);
+          scale[1] = -0.5f * static_cast<GLfloat>(height) / static_cast<GLfloat>(TEXHEIGHT);
+
+          // 切り出した画像の種類の判別
           if (image->nChannels == 3)
             format = GL_BGR;
           else if (image->nChannels == 4)
@@ -213,8 +222,8 @@ public:
             format = GL_RED;
 
           // テクスチャメモリへの転送
-          GLsizei size = REALWIDTH * image->nChannels;
-          GLsizei offset = size * REALORIGINY + REALORIGINX * image->nChannels;
+          GLsizei size = IMGWIDTH * image->nChannels;
+          GLsizei offset = size * IMGORIGINY + IMGORIGINX * image->nChannels;
           lock();
           for (int y = 0; y < image->height; ++y)
             memcpy(texture + size * y, image->imageData + image->widthStep * y + offset, size);
@@ -235,11 +244,17 @@ public:
     return 0;
   }
 
+  // テクスチャのスケール
+  const GLfloat *getScale(void)
+  {
+    return scale;
+  }
+
   // テクスチャ転送
-  void sendTexture(GLint x, GLint y)
+  void subTexture(void)
   {
     lock();
-    glTexSubImage2D(GL_TEXTURE_2D, 0, x, y, 384, height, format, GL_UNSIGNED_BYTE, texture);
+    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, format, GL_UNSIGNED_BYTE, texture);
     unlock();
   }
 };
@@ -263,13 +278,9 @@ static GLuint rectangle(void)
   static const GLfloat p[] =
   {
     -1.0f, -1.0f,
-     0.0f, -1.0f,
-     0.0f,  1.0f,
-    -1.0f,  1.0f,
-     0.0f, -1.0f,
-     1.0f, -1.0f,
-     1.0f,  1.0f,
-     0.0f,  1.0f
+    1.0f, -1.0f,
+    1.0f,  1.0f,
+    -1.0f,  1.0f
   };
   glBufferData(GL_ARRAY_BUFFER, sizeof p, p, GL_STATIC_DRAW);
 
@@ -290,12 +301,19 @@ static GLuint texture(GLsizei width, GLsizei height)
   glGenTextures(1, &tex);
   glBindTexture(GL_TEXTURE_2D, tex);
 
+  // 全体が黒色の画像を準備する
+  GLubyte *texture = new GLubyte[width * height * 4];
+  memset(texture, 0, width * height * 4);
+
   // テクスチャメモリを確保する
-  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, 0);
+  glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 0, GL_BGRA, GL_UNSIGNED_BYTE, texture);
+
+  // 画像に使用したメモリを開放する
+  delete[] texture;
 
   // テクスチャの特性を設定する
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER);
+  glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
 
@@ -389,8 +407,8 @@ int main(int argc, const char * argv[])
   if (init("Oculus Test")) return 1;
 
   // キャプチャ用スレッドを生成する
-  CaptureWorker cam0(0, CAPTWIDTH, CAPTHEIGHT, CAPTFPS);
-  CaptureWorker cam1(1, CAPTWIDTH, CAPTHEIGHT, CAPTFPS);
+  CaptureWorker cam0(1, CAPTWIDTH, CAPTHEIGHT, CAPTFPS);
+  CaptureWorker cam1(2, CAPTWIDTH, CAPTHEIGHT, CAPTFPS);
 
   // ポリゴンの作成
   GLuint rect = rectangle();
@@ -401,6 +419,10 @@ int main(int argc, const char * argv[])
   // シェーダ
   GLuint shader = ggLoadShader("simple.vert", "simple.frag");
   GLuint texLoc = glGetUniformLocation(shader, "tex");
+  GLuint ScreenCenterLoc = glGetUniformLocation(shader, "ScreenCenter");
+  GLuint LensCenterLoc = glGetUniformLocation(shader, "LensCenter");
+  GLuint TextureScaleLoc = glGetUniformLocation(shader, "TextureScale");
+  GLuint TextureSizeLoc = glGetUniformLocation(shader, "TextureSize");
 
   // ウィンドウのサイズ変更時に呼び出す処理の設定
   glfwSetWindowSizeCallback(resize);
@@ -408,23 +430,34 @@ int main(int argc, const char * argv[])
   // キーボード操作時に呼び出す処理の設定
   glfwSetKeyCallback(keyboard);
 
+  // シェーダの使用
+  glUseProgram(shader);
+  glUniform1i(texLoc, 0);
+
+  // テクスチャ座標のスケール
+  glUniform2f(TextureScaleLoc, 1.0, (GLfloat)DISPHEIGHT / (GLfloat)(DISPWIDTH / 2));
+
+  // テクスチャの使用
+  glActiveTexture(GL_TEXTURE0);
+  glBindTexture(GL_TEXTURE_2D, tex);
+
+  // 描画する図形の指定
+  glBindVertexArray(rect);
+
   // ウィンドウが開いている間くり返し描画する
   while (glfwGetWindowParam(GLFW_OPENED) && glfwGetKey(GLFW_KEY_ESC) == GLFW_RELEASE)
   {
-    // シェーダの使用
-    glUseProgram(shader);
-    glUniform1i(texLoc, 0);
-
-    // テクスチャの使用
-    glActiveTexture(GL_TEXTURE0);
-    glBindTexture(GL_TEXTURE_2D, tex);
-    cam0.sendTexture(        0, 0);
-    cam1.sendTexture(REALWIDTH, 0);
-
     // 描画
-    glBindVertexArray(rect);
+    cam0.subTexture();
+    glUniform2f(ScreenCenterLoc, -0.5f, 0.0f);
+    glUniform2f(LensCenterLoc,  0.1453f, 0.0f);
+    glUniform2fv(TextureSizeLoc, 1, cam0.getScale());
     glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
-    glDrawArrays(GL_TRIANGLE_FAN, 4, 4);
+    cam1.subTexture();
+    glUniform2f(ScreenCenterLoc,  0.5f, 0.0f);
+    glUniform2f(LensCenterLoc, -0.1453f, 0.0f);
+    glUniform2fv(TextureSizeLoc, 1, cam1.getScale());
+    glDrawArrays(GL_TRIANGLE_FAN, 0, 4);
 
     // ダブルバッファリング
     glfwSwapBuffers();
