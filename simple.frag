@@ -15,17 +15,17 @@ uniform vec2 TextureSize;                           // ƒeƒNƒXƒ`ƒƒ‹óŠÔã‚ÌƒeƒNƒXƒ
 uniform vec2 LensCenter;                            // ƒŒƒ“ƒY’†S‚ÌƒXƒNƒŠ[ƒ“’†S‚©‚ç‚Ì‚¸‚ê
 
 // ƒŒƒ“ƒY•â³
-const vec4 k = vec4(1.0, 0.0, 0.0, 0.0);            // ƒsƒ“ƒNƒbƒVƒ‡ƒ“^ƒoƒŒƒ‹‚Ğ‚¸‚İ•â³
-const vec2 s = vec2(0.6, 0.6);                      // ƒŒƒ“ƒY•â³‚É‚æ‚ék¬‚ğ’²®‚·‚éŠg‘åŒW”
+const vec4 k = vec4(0.2, 0.1, 0.0, 0.0);            // ƒsƒ“ƒNƒbƒVƒ‡ƒ“^ƒoƒŒƒ‹‚Ğ‚¸‚İ•â³
+const vec2 s = vec2(0.7, 0.7);                      // ƒŒƒ“ƒY•â³‚É‚æ‚ék¬‚ğ’²®‚·‚éŠg‘åŒW”
 
 void main(void)
 {
   vec2 d = t * s - LensCenter;
-  vec4 o;
-  o.x = dot(d, d);
-  o.y = o.x * o.x;
-  o.z = o.y * o.x;
-  o.w = o.z * o.x;
-  vec2 tc = (d * (1.0 + dot(o, k)) + vec2(1.0, -1.0)) * TextureSize;
+  vec4 r;
+  r.x = dot(d, d);	// r^2
+  r.y = r.x * r.x;	// r^4
+  r.z = r.y * r.x;	// r^6
+  r.w = r.z * r.x;	// r^8
+  vec2 tc = (d * (1.0 + dot(r, k)) + vec2(1.0, -1.0)) * TextureSize;
   fc = texture(tex, tc);
 }
