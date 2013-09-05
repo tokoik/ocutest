@@ -56,25 +56,102 @@ class CaptureWorker
   GLenum format;
   GLsizei width, height;
   GLubyte *texture;
+
+  // テクスチャ空間上でのテクスチャのサイズ
   GLfloat scale[2];
 
   // 実行状態
-  bool status;
+  bool running;
 
-  // スレッドとミューテックス
-#ifdef _WIN32
-  HANDLE thread;
-  HANDLE mutex;
-#else
-  pthread_t thread;
-  pthread_mutex_t mutex;
-#endif
+  // ミューテックスとスレッド
+  GLFWmutex mutex;
+  GLFWthread thread;
+
+  // mutex のロック
+  void lock(void)
+  {
+    glfwLockMutex(mutex);
+  }
+
+  // mutex のリリース
+  void unlock(void)
+  {
+    glfwUnlockMutex(mutex);
+  }
+
+  // スレッドの停止判定
+  bool check(void)
+  {
+    bool status;
+
+    lock();
+    status = running;
+    unlock();
+
+    return status;
+  }
+
+  // スレッドの実行
+  static void GLFWCALL run(void *arg)
+  {
+    reinterpret_cast<CaptureWorker *>(arg)->getTexture();
+  }
+
+  // テクスチャ作成
+  void *getTexture(void)
+  {
+      while (check())
+      {
+        if (cvGrabFrame(capture))
+        {
+          // キャプチャ映像から画像を切り出す
+          IplImage *image = cvRetrieveFrame(capture);
+
+          if (image)
+          {
+            // 切り出した画像のサイズとテクスチャ座標のスケール
+            height = image->height;
+            width = height * IMGASPECT;
+            if (width > image->width) width = image->width;
+            scale[0] = 0.5f * static_cast<GLfloat>(width) / static_cast<GLfloat>(TEXWIDTH);
+            scale[1] = -0.5f * static_cast<GLfloat>(height) / static_cast<GLfloat>(TEXHEIGHT);
+
+            // 切り出した画像の種類の判別
+            if (image->nChannels == 4)
+              format = GL_BGRA;
+            else if (image->nChannels == 3)
+              format = GL_BGR;
+            else if (image->nChannels == 2)
+              format = GL_RG;
+            else
+              format = GL_RED;
+
+            // テクスチャメモリへの転送
+            GLsizei size = IMGWIDTH * image->nChannels;
+            GLsizei offset = size * IMGORIGINY + IMGORIGINX * image->nChannels;
+            lock();
+            for (int y = 0; y < image->height; ++y)
+              memcpy(texture + size * y, image->imageData + image->widthStep * y + offset, size);
+            unlock();
+          }
+          else
+          {
+            // １フレーム分待つ
+            glfwSleep(1.0 / (double)CAPTFPS);
+          }
+        }
+      }
+
+    return 0;
+  }
 
 public:
 
   // コンストラクタ
   CaptureWorker(int index, int width, int height, int fps)
   {
+    std::cerr << "Initializing camera " << index << std::endl;
+
     // カメラを初期化する
     capture = cvCreateCameraCapture(index);
     if (capture)
@@ -82,172 +159,70 @@ public:
       cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_WIDTH, static_cast<double>(width));
       cvSetCaptureProperty(capture, CV_CAP_PROP_FRAME_HEIGHT, static_cast<double>(height));
       cvSetCaptureProperty(capture, CV_CAP_PROP_FPS, static_cast<double>(fps));
+
+      // パラメータに初期値を与えておく
+      this->format = GL_BGRA;
+      this->width = width;
+      this->height = height;
+      scale[0] = 0.5f * static_cast<GLfloat>(width) / static_cast<GLfloat>(TEXWIDTH);
+      scale[1] = -0.5f * static_cast<GLfloat>(height) / static_cast<GLfloat>(TEXHEIGHT);
+      running = false;
+
+      // テクスチャ用のメモリを確保する
+      texture = new GLubyte[width * height * 4];
+
+      std::cerr << "Camera " << index << " ready" << std::endl;
     }
     else
+    {
       std::cerr << "Cannot capture from camera " << index << std::endl;
-
-    // テクスチャ用のメモリを確保する
-    texture = new GLubyte[width * height * 4];
-
-    // パラメータに初期値を与えておく
-    this->width = width;
-    this->height = height;
-    this->format = GL_BGRA;
-    this->scale[0] = 0.5f * static_cast<GLfloat>(width) / static_cast<GLfloat>(TEXWIDTH);
-    this->scale[1] = -0.5f * static_cast<GLfloat>(height) / static_cast<GLfloat>(TEXHEIGHT);
-
-    // スレッドとミューテックスを生成する
-#ifdef _WIN32
-    mutex = CreateMutex(NULL, TRUE, NULL);
-    thread = CreateThread(NULL, 0, start, (LPVOID)this, 0, NULL);
-#else
-    pthread_mutex_init(&mutex, 0);
-    pthread_create(&thread, 0, start, this);
-#endif
-
-    // スレッドが実行状態であることを記録する
-    status = true;
+    }
   }
 
   // デストラクタ
   ~CaptureWorker()
   {
-    // スレッドを停止する
-    stop();
+    if (capture)
+    {
+      // スレッドを停止する
+      stop();
 
-#ifdef _WIN32
-    // スレッドの停止を待つ
-    WaitForSingleObject(thread, 0); 
-    CloseHandle(thread);
+      // スレッドの停止を待つ
+      glfwWaitThread(thread, GLFW_WAIT);
+
+      // capture を release する
+      cvReleaseCapture(&capture);
+
+      // メモリを解放する
+      delete[] texture;
+    }
 
     // ミューテックスを破棄する
-    CloseHandle(mutex);
-#else
-    // スレッドの停止を待つ
-    pthread_join(thread, 0);
-
-    // ミューテックスを破棄する
-    pthread_mutex_destroy(&mutex);
-#endif
-
-    // image の release
-    if (capture) cvReleaseCapture(&capture);
-
-    // メモリの解放
-    delete[] texture;
-  }
-
-  // mutex のロック
-  void lock(void)
-  {
-#ifdef _WIN32
-    WaitForSingleObject(mutex, 0); 
-#else
-    pthread_mutex_lock(&mutex);
-#endif
-  }
-
-  // mutex のリリース
-  void unlock(void)
-  {
-#ifdef _WIN32
-    ReleaseMutex(mutex);
-#else
-    pthread_mutex_unlock(&mutex);
-#endif
+    glfwDestroyMutex(mutex);
   }
 
   // スレッドの開始
-#ifdef _WIN32
-  static DWORD WINAPI start(LPVOID arg)
-#else
-  static void *start(void *arg)
-#endif
+  void start(void)
   {
-    return reinterpret_cast<CaptureWorker *>(arg)->getTexture();
+    // ミューテックスを生成する
+    mutex = glfwCreateMutex();
+
+    if (capture)
+    {
+      // スレッドが実行状態であることを記録する
+      running = true;
+
+      // スレッドを生成する
+      thread = glfwCreateThread(run, this);
+    }
   }
 
   // スレッドの停止
   void stop(void)
   {
     lock();
-    status = false;
+    running = false;
     unlock();
-  }
-
-  // スレッドの停止判定
-  bool check(void)
-  {
-    bool ret;
-
-    lock();
-    ret = status;
-    unlock();
-
-    return ret;
-  }
-
-  // テクスチャ作成
-#ifdef _WIN32
-  DWORD WINAPI getTexture(void)
-#else
-  void *getTexture(void)
-#endif
-  {
-    for (;;)
-    {
-      // 終了条件のテスト
-      if (!check()) break;
-
-      if (capture && cvGrabFrame(capture))
-      {
-        // キャプチャ映像から画像を切り出す
-        IplImage *image = cvRetrieveFrame(capture);
-
-        if (image)
-        {
-          // 切り出した画像のサイズとテクスチャ座標のスケール
-          height = image->height;
-          width = height * IMGASPECT;
-          if (width > image->width) width = image->width;
-          scale[0] = 0.5f * static_cast<GLfloat>(width) / static_cast<GLfloat>(TEXWIDTH);
-          scale[1] = -0.5f * static_cast<GLfloat>(height) / static_cast<GLfloat>(TEXHEIGHT);
-
-          // 切り出した画像の種類の判別
-          if (image->nChannels == 3)
-            format = GL_BGR;
-          else if (image->nChannels == 4)
-            format = GL_BGRA;
-          else
-            format = GL_RED;
-
-          // テクスチャメモリへの転送
-          GLsizei size = IMGWIDTH * image->nChannels;
-          GLsizei offset = size * IMGORIGINY + IMGORIGINX * image->nChannels;
-          lock();
-          for (int y = 0; y < image->height; ++y)
-            memcpy(texture + size * y, image->imageData + image->widthStep * y + offset, size);
-          unlock();
-        }
-        else
-        {
-          // １フレーム分待つ
-#ifdef _WIN32
-          Sleep(1000 / CAPTFPS);
-#else
-          usleep(1000000 / CAPTFPS);
-#endif
-        }
-      }
-    }
-
-    return 0;
-  }
-
-  // テクスチャのスケール
-  const GLfloat *getScale(void)
-  {
-    return scale;
   }
 
   // テクスチャ転送
@@ -256,6 +231,12 @@ public:
     lock();
     glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0, width, height, format, GL_UNSIGNED_BYTE, texture);
     unlock();
+  }
+
+  // テクスチャのスケール
+  const GLfloat *getScale(void)
+  {
+    return scale;
   }
 };
 
@@ -278,8 +259,8 @@ static GLuint rectangle(void)
   static const GLfloat p[] =
   {
     -1.0f, -1.0f,
-    1.0f, -1.0f,
-    1.0f,  1.0f,
+     1.0f, -1.0f,
+     1.0f,  1.0f,
     -1.0f,  1.0f
   };
   glBufferData(GL_ARRAY_BUFFER, sizeof p, p, GL_STATIC_DRAW);
@@ -403,12 +384,12 @@ static void GLFWCALL keyboard(int key, int action)
 //
 int main(int argc, const char * argv[])
 {
+  // カメラの初期化
+  CaptureWorker cam0(0, CAPTWIDTH, CAPTHEIGHT, CAPTFPS);
+  CaptureWorker cam1(1, CAPTWIDTH, CAPTHEIGHT, CAPTFPS);
+
   // 初期設定
   if (init("Oculus Test")) return 1;
-
-  // キャプチャ用スレッドを生成する
-  CaptureWorker cam0(1, CAPTWIDTH, CAPTHEIGHT, CAPTFPS);
-  CaptureWorker cam1(2, CAPTWIDTH, CAPTHEIGHT, CAPTFPS);
 
   // ポリゴンの作成
   GLuint rect = rectangle();
@@ -443,6 +424,10 @@ int main(int argc, const char * argv[])
 
   // 描画する図形の指定
   glBindVertexArray(rect);
+
+  // スレッドの実行開始
+  cam0.start();
+  cam1.start();
 
   // ウィンドウが開いている間くり返し描画する
   while (glfwGetWindowParam(GLFW_OPENED) && glfwGetKey(GLFW_KEY_ESC) == GLFW_RELEASE)
